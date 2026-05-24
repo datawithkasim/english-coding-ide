@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import Editor from '../components/Editor.jsx';
+import OutputPanel from '../components/OutputPanel.jsx';
 import { supabase, getSessionToken } from '../lib/supabase.js';
+import { runProject } from '../lib/runner.js';
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 
@@ -15,6 +17,8 @@ export default function ProjectView() {
   const [saveState, setSaveState] = useState('idle');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState(null);
   const saveTimer = useRef(null);
   const pendingContent = useRef(null);
 
@@ -154,6 +158,60 @@ export default function ProjectView() {
     await loadProject(remaining[0]?.id);
   }
 
+  async function handleRun() {
+    if (!project || running) return;
+    // Flush any pending autosave before running so the droplet sees latest content
+    if (saveTimer.current && activeFile && pendingContent.current !== null) {
+      clearTimeout(saveTimer.current);
+      const token = getSessionToken();
+      const content = pendingContent.current;
+      const { data, error } = await supabase.rpc('ide_save_file', {
+        p_session_token: token,
+        p_file_id: activeFile.id,
+        p_content_text: content,
+        p_expected_version: activeFile.version,
+        p_kind: 'manual_save',
+      });
+      if (!error) {
+        setActiveFile((prev) => prev && { ...prev, content_text: content, version: data.version });
+        setSaveState('saved');
+      }
+    }
+
+    setRunning(true);
+    setRunResult(null);
+    // Refetch file contents for the runner — autosave may not have flushed all tabs
+    const token = getSessionToken();
+    const { data: proj, error: projErr } = await supabase.rpc('ide_get_project', {
+      p_session_token: token,
+      p_project_id: projectId,
+    });
+    if (projErr) {
+      setRunResult({ status: 'infra_error', exitCode: 1, stdout: '', stderr: projErr.message, duration: 0 });
+      setRunning(false);
+      return;
+    }
+    const allFiles = await Promise.all(
+      proj.files.map(async (f) => {
+        const { data, error } = await supabase.rpc('ide_get_file', {
+          p_session_token: token,
+          p_file_id: f.id,
+        });
+        return error ? null : { path: f.path, content_text: data.content_text };
+      })
+    );
+    const validFiles = allFiles.filter(Boolean);
+
+    const result = await runProject({
+      projectId,
+      runtime: project.runtime,
+      entrypoint: project.entrypoint,
+      files: validFiles,
+    });
+    setRunResult(result);
+    setRunning(false);
+  }
+
   async function handleArchiveProject() {
     if (!window.confirm(`Archive "${project?.name}"? You can restore it later.`)) return;
     const token = getSessionToken();
@@ -219,11 +277,11 @@ export default function ProjectView() {
             Archive
           </button>
           <button
-            disabled
-            title="Phase 3"
-            className="px-3 py-1 rounded bg-slate-800 text-slate-500 text-sm font-medium cursor-not-allowed"
+            onClick={handleRun}
+            disabled={running}
+            className="px-3 py-1 rounded bg-brand-accent text-slate-950 text-sm font-medium disabled:opacity-50"
           >
-            ▶ Run
+            {running ? 'Running…' : '▶ Run'}
           </button>
         </div>
       </header>
@@ -234,7 +292,7 @@ export default function ProjectView() {
         </div>
       )}
 
-      <div className="flex-1 grid grid-cols-[16rem_1fr] min-h-0">
+      <div className="flex-1 grid grid-cols-[16rem_1fr_24rem] min-h-0">
         <aside className="border-r border-slate-800 p-3 text-sm overflow-y-auto">
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs uppercase tracking-wider text-slate-500">Files</div>
@@ -295,6 +353,9 @@ export default function ProjectView() {
             <div className="p-8 text-slate-500">Select a file</div>
           )}
         </main>
+        <aside className="border-l border-slate-800 min-h-0">
+          <OutputPanel result={runResult} running={running} />
+        </aside>
       </div>
     </div>
   );
