@@ -20,7 +20,7 @@
 CREATE TABLE IF NOT EXISTS ide.runs (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id    uuid NOT NULL REFERENCES ide.projects(id) ON DELETE CASCADE,
-  invoker_id    uuid NOT NULL REFERENCES public.app_users(id),
+  invoker_id    text NOT NULL REFERENCES public.app_users(id),
   runtime       text NOT NULL,
   entrypoint    text NOT NULL,
   status        text NOT NULL DEFAULT 'queued'

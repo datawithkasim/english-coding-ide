@@ -13,7 +13,7 @@
 
 CREATE TABLE IF NOT EXISTS ide.projects (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_id      uuid NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
+  owner_id      text NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
   name          text NOT NULL,
   slug          text NOT NULL,
   runtime       text NOT NULL DEFAULT 'python' CHECK (runtime IN ('python', 'javascript')),

@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS ide.files (
   version         integer NOT NULL DEFAULT 1,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
-  last_editor_id  uuid REFERENCES public.app_users(id),
+  last_editor_id  text REFERENCES public.app_users(id),
   CHECK (content_text IS NOT NULL OR content_b64 IS NOT NULL),
   CHECK (size_bytes <= 1048576),  -- 1 MiB per file hard cap
   UNIQUE (project_id, path)

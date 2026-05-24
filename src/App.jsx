@@ -15,15 +15,13 @@ export default function App() {
       return;
     }
     supabase
-      .rpc('verify_session_only', { p_session_token: token })
+      .rpc('ide_has_access', { p_session_token: token })
       .then(({ data, error }) => {
         if (error) {
           setAuthState({ checked: true, hasAccess: false });
           return;
         }
-        // Phase 0: only verifies session validity. Phase 1 will call
-        // ide_has_access RPC (wraps ide.has_access()) for feature-flag gate.
-        setAuthState({ checked: true, hasAccess: Boolean(data?.valid) });
+        setAuthState({ checked: true, hasAccess: Boolean(data) });
       });
   }, []);
 

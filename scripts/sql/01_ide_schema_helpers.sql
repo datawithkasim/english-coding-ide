@@ -27,7 +27,7 @@ CREATE SCHEMA IF NOT EXISTS ide;
 -- Returns the app_users.id for a valid, non-expired session, else NULL.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION ide.user_id_from_session(p_session_token text)
-RETURNS uuid
+RETURNS text
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
@@ -51,7 +51,7 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_user_id uuid;
+  v_user_id text;
   v_role    text;
 BEGIN
   SELECT id, role
@@ -91,7 +91,7 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_user_id uuid;
+  v_user_id text;
   v_flags   jsonb;
 BEGIN
   SELECT id, feature_flags

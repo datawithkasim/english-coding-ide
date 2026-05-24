@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS ide.file_events (
   from_path     text,
   kind          text NOT NULL
                   CHECK (kind IN ('created','updated','deleted','renamed','auto_save','manual_save','teacher_save')),
-  actor_id      uuid NOT NULL REFERENCES public.app_users(id),
+  actor_id      text NOT NULL REFERENCES public.app_users(id),
   actor_is_staff boolean NOT NULL DEFAULT false,
   size_bytes    integer,
   occurred_at   timestamptz NOT NULL DEFAULT now()

@@ -9,9 +9,9 @@
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS ide.staff (
-  user_id     uuid PRIMARY KEY REFERENCES public.app_users(id) ON DELETE CASCADE,
+  user_id     text PRIMARY KEY REFERENCES public.app_users(id) ON DELETE CASCADE,
   granted_at  timestamptz NOT NULL DEFAULT now(),
-  granted_by  uuid REFERENCES public.app_users(id),
+  granted_by  text REFERENCES public.app_users(id),
   notes       text
 );
 
