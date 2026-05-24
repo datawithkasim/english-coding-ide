@@ -62,14 +62,23 @@ def run_workspace(
     entrypoint: str,
     runtime: str = "python",
     stdin: str = "",
-    timeout: int = 15,
+    timeout: int = None,      # default: reuse TIMEOUT_SECONDS from main.py
 ):
     """Materialize files in a tempdir, exec entrypoint inside firejail.
 
     Reuses /execute's sandbox flags but swaps `--whitelist=<single file>`
     for `--whitelist=<workspace_dir>`. Everything else is identical, so the
     security envelope is unchanged.
+
+    Timeout note: defaults to the module-level TIMEOUT_SECONDS used by the
+    single-file /execute route. Multi-file projects don't take longer than
+    single-file ones at the same code length — student code runs at the same
+    speed either way — so there's no justification for a higher cap. Keeping
+    them in lockstep also avoids one route starving the single-worker
+    uvicorn instance more than the other.
     """
+    if timeout is None:
+        timeout = TIMEOUT_SECONDS
     if not _safe_workspace_path(entrypoint):
         return "", "Error: invalid entrypoint path", 1
 
@@ -80,6 +89,14 @@ def run_workspace(
                 return "", f"Error: invalid file path: {f.path}", 1
             full = os.path.join(workdir, f.path)
             os.makedirs(os.path.dirname(full), exist_ok=True)
+            # Reject pre-existing symlinks at the target path. Path-string
+            # validation rejects `../etc/passwd` but cannot stop a file the
+            # student created via prior code (`os.symlink('/etc/passwd', 'leak')`)
+            # from leaking arbitrary host files on the next /run_project call.
+            # Firejail's `--whitelist=<workdir>` does NOT consistently resolve
+            # symlinks against the whitelist, so block at write time.
+            if os.path.lexists(full) and os.path.islink(full):
+                return "", f"Error: refusing to write through symlink: {f.path}", 1
             if f.content_text is not None:
                 with open(full, "w", encoding="utf-8") as fh:
                     fh.write(f.content_text)

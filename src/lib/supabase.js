@@ -22,9 +22,26 @@ export function setSessionToken(token) {
   else localStorage.removeItem(SESSION_KEY);
 }
 
-// Bootstrap from app.english-coding cross-subdomain cookie (Phase 1).
-// Until cookie-widen ships, fall back to ?session=<token> query param for dev.
+// Read the parent-domain `ec_session` cookie set by app.english-coding's
+// storeSessionToken(). Returns undefined if not on the english-coding.co.uk
+// parent domain or the cookie isn't present.
+function readSessionCookie() {
+  if (typeof document === 'undefined') return undefined;
+  const m = document.cookie.match(/(?:^|;\s*)ec_session=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : undefined;
+}
+
+// Bootstrap order: parent-domain cookie (set by app.english-coding after login)
+// first, then ?session=<token> URL param as a dev-only fallback for local
+// testing (localhost has no shared cookie path with app.english-coding.co.uk).
+// The URL value is cleaned from the address bar immediately so it doesn't
+// linger in history.
 export function bootstrapSession() {
+  const fromCookie = readSessionCookie();
+  if (fromCookie) {
+    setSessionToken(fromCookie);
+    return fromCookie;
+  }
   const params = new URLSearchParams(window.location.search);
   const fromUrl = params.get('session');
   if (fromUrl) {
