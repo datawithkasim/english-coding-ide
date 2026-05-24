@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import Editor from '../components/Editor.jsx';
 import { supabase, getSessionToken } from '../lib/supabase.js';
 
@@ -7,43 +7,47 @@ const AUTOSAVE_DEBOUNCE_MS = 800;
 
 export default function ProjectView() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const [project, setProject] = useState(null);
   const [files, setFiles] = useState([]);
   const [activeFileId, setActiveFileId] = useState(null);
-  const [activeFile, setActiveFile] = useState(null); // {id, path, content_text, version}
-  const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
+  const [activeFile, setActiveFile] = useState(null);
+  const [saveState, setSaveState] = useState('idle');
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
   const saveTimer = useRef(null);
   const pendingContent = useRef(null);
 
-  // Load project + file index
+  async function loadProject(preferredFileId) {
+    const token = getSessionToken();
+    const { data, error } = await supabase.rpc('ide_get_project', {
+      p_session_token: token,
+      p_project_id: projectId,
+    });
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    setProject(data.project);
+    setFiles(data.files);
+    if (preferredFileId && data.files.some((f) => f.id === preferredFileId)) {
+      setActiveFileId(preferredFileId);
+    } else {
+      const entry = data.files.find((f) => f.path === data.project.entrypoint) ?? data.files[0];
+      setActiveFileId(entry ? entry.id : null);
+    }
+  }
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const token = getSessionToken();
-      const { data, error } = await supabase.rpc('ide_get_project', {
-        p_session_token: token,
-        p_project_id: projectId,
-      });
-      if (cancelled) return;
-      if (error) {
-        setError(error.message);
-        return;
-      }
-      setProject(data.project);
-      setFiles(data.files);
-      // Auto-open the entrypoint (first matching path), else first file
-      const entryFile = data.files.find((f) => f.path === data.project.entrypoint) ?? data.files[0];
-      if (entryFile) setActiveFileId(entryFile.id);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    loadProject();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // Load active file content
   useEffect(() => {
-    if (!activeFileId) return;
+    if (!activeFileId) {
+      setActiveFile(null);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const token = getSessionToken();
@@ -64,7 +68,6 @@ export default function ProjectView() {
     };
   }, [activeFileId]);
 
-  // Debounced autosave triggered by editor onChange
   const handleEditorChange = (newContent) => {
     if (!activeFile) return;
     pendingContent.current = newContent;
@@ -89,11 +92,82 @@ export default function ProjectView() {
         }
         return;
       }
-      // Bump local version + content to stay in sync for next save
       setActiveFile((prev) => prev && { ...prev, content_text: content, version: data.version });
       setSaveState('saved');
     }, AUTOSAVE_DEBOUNCE_MS);
   };
+
+  async function handleNewFile() {
+    const path = window.prompt('New file path? (e.g. lib/utils.py)');
+    if (!path) return;
+    setBusy(true);
+    setError(null);
+    const token = getSessionToken();
+    const { data, error } = await supabase.rpc('ide_create_file', {
+      p_session_token: token,
+      p_project_id: projectId,
+      p_path: path,
+      p_content_text: '',
+    });
+    setBusy(false);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    await loadProject(data.id);
+  }
+
+  async function handleRenameFile(file) {
+    const newPath = window.prompt(`Rename ${file.path} to:`, file.path);
+    if (!newPath || newPath === file.path) return;
+    setBusy(true);
+    setError(null);
+    const token = getSessionToken();
+    const { error } = await supabase.rpc('ide_rename_file', {
+      p_session_token: token,
+      p_file_id: file.id,
+      p_new_path: newPath,
+    });
+    setBusy(false);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    await loadProject(file.id);
+  }
+
+  async function handleDeleteFile(file) {
+    if (!window.confirm(`Delete ${file.path}?`)) return;
+    setBusy(true);
+    setError(null);
+    const token = getSessionToken();
+    const { error } = await supabase.rpc('ide_delete_file', {
+      p_session_token: token,
+      p_file_id: file.id,
+    });
+    setBusy(false);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    const remaining = files.filter((f) => f.id !== file.id);
+    await loadProject(remaining[0]?.id);
+  }
+
+  async function handleArchiveProject() {
+    if (!window.confirm(`Archive "${project?.name}"? You can restore it later.`)) return;
+    const token = getSessionToken();
+    const { error } = await supabase.rpc('ide_archive_project', {
+      p_session_token: token,
+      p_project_id: projectId,
+      p_archive: true,
+    });
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    navigate('/');
+  }
 
   const editorLanguage = useMemo(() => {
     if (!activeFile) return 'python';
@@ -139,6 +213,12 @@ export default function ProjectView() {
             }[saveState]}
           </span>
           <button
+            onClick={handleArchiveProject}
+            className="px-2 py-1 rounded border border-slate-700 text-slate-400 text-xs hover:border-red-500/50 hover:text-red-300"
+          >
+            Archive
+          </button>
+          <button
             disabled
             title="Phase 3"
             className="px-3 py-1 rounded bg-slate-800 text-slate-500 text-sm font-medium cursor-not-allowed"
@@ -147,28 +227,61 @@ export default function ProjectView() {
           </button>
         </div>
       </header>
+
+      {error && (
+        <div className="mx-4 mt-2 p-2 rounded border border-red-500/40 bg-red-500/10 text-red-300 text-xs">
+          {error}
+        </div>
+      )}
+
       <div className="flex-1 grid grid-cols-[16rem_1fr] min-h-0">
         <aside className="border-r border-slate-800 p-3 text-sm overflow-y-auto">
-          <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">Files</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs uppercase tracking-wider text-slate-500">Files</div>
+            <button
+              onClick={handleNewFile}
+              disabled={busy}
+              className="text-xs px-2 py-0.5 rounded bg-brand-accent/15 text-brand-accent hover:bg-brand-accent/25 disabled:opacity-50"
+            >
+              + New
+            </button>
+          </div>
           <ul className="space-y-1">
             {files.map((f) => (
-              <li key={f.id}>
+              <li key={f.id} className="group flex items-center gap-1">
                 <button
                   onClick={() => setActiveFileId(f.id)}
-                  className={`w-full text-left px-2 py-1 rounded font-mono text-xs ${
+                  className={`flex-1 text-left px-2 py-1 rounded font-mono text-xs truncate ${
                     f.id === activeFileId
                       ? 'bg-brand-accent/20 text-brand-accent'
                       : 'text-slate-300 hover:bg-slate-800'
                   }`}
+                  title={f.path}
                 >
                   {f.path}
+                  {f.path === project.entrypoint && (
+                    <span className="ml-1 text-[10px] text-amber-400/70" title="Entrypoint">▶</span>
+                  )}
                 </button>
+                <button
+                  onClick={() => handleRenameFile(f)}
+                  className="opacity-0 group-hover:opacity-100 text-xs text-slate-500 hover:text-slate-300 px-1"
+                  title="Rename"
+                >
+                  ✎
+                </button>
+                {f.path !== project.entrypoint && (
+                  <button
+                    onClick={() => handleDeleteFile(f)}
+                    className="opacity-0 group-hover:opacity-100 text-xs text-slate-500 hover:text-red-400 px-1"
+                    title="Delete"
+                  >
+                    ×
+                  </button>
+                )}
               </li>
             ))}
           </ul>
-          <div className="mt-4 text-xs text-slate-600">
-            File tree CRUD ships in Phase 2.
-          </div>
         </aside>
         <main className="min-h-0">
           {activeFile ? (
