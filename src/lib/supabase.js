@@ -31,12 +31,36 @@ function readSessionCookie() {
   return m ? decodeURIComponent(m[1]) : undefined;
 }
 
-// Bootstrap order: parent-domain cookie (set by app.english-coding after login)
-// first, then ?session=<token> URL param as a dev-only fallback for local
-// testing (localhost has no shared cookie path with app.english-coding.co.uk).
-// The URL value is cleaned from the address bar immediately so it doesn't
-// linger in history.
+// Read URL fragment `#session=<token>`. Fragments are never sent to the
+// server in requests, never written to access logs, and don't appear in
+// Referer headers — strictly safer than `?session=` for cross-frame auth
+// handoff from the parent app at app.english-coding.co.uk/Lab.
+function readSessionFragment() {
+  if (typeof window === 'undefined') return undefined;
+  const hash = window.location.hash || '';
+  const m = hash.match(/(?:^#|&)session=([^&]+)/);
+  return m ? decodeURIComponent(m[1]) : undefined;
+}
+
+// Bootstrap order:
+//   1. URL fragment `#session=<token>` — primary path when nested in the
+//      app's sandboxed iframe at /lab/. Cleaned from URL via replaceState.
+//   2. `ec_session` cookie if app ever re-enables parent-domain cookies
+//      (currently host-only, so this is mostly inert on the lab origin).
+//   3. `?session=<token>` query param — local dev fallback. Cleaned too.
 export function bootstrapSession() {
+  const fromFragment = readSessionFragment();
+  if (fromFragment) {
+    setSessionToken(fromFragment);
+    // Strip the session fragment but preserve any other hash routing data.
+    const remaining = window.location.hash
+      .replace(/(?:^#|&)session=[^&]+/, '')
+      .replace(/^&/, '#');
+    const clean = window.location.pathname + window.location.search +
+      (remaining && remaining !== '#' ? remaining : '');
+    window.history.replaceState({}, '', clean);
+    return fromFragment;
+  }
   const fromCookie = readSessionCookie();
   if (fromCookie) {
     setSessionToken(fromCookie);
